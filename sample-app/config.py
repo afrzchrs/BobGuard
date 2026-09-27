@@ -1,0 +1,4 @@
+# INTENTIONALLY VULNERABLE - LOCAL TEST ONLY
+# A02:2025 Security Misconfiguration
+SECRET_KEY = "SentryHeal-DEMO-HARDCODED-SECRET-2026"
+DATABASE_URL = "sqlite:///sentryheal.db"

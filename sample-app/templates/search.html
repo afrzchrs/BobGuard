@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Echo</title></head>
+<body>
+<h1>Echo Result</h1>
+<!-- A05:2025 XSS: intentionally unsafe template output -->
+<div id="message">{{ message|safe }}</div>
+</body>
+</html>
