@@ -8,7 +8,7 @@ BobGuard is an autonomous security engineering agent and interactive CLI tool po
 ## Key Features
 
 * **Single Source of Truth (SSOT) Architecture:** Audit policies and patch strategies are strictly defined in declarative Markdown documents (`.bob/rules/` and `.bob/prompts/`), consumed identically by the CLI and IBM Bob IDE Agent Mode.
-* **Zero False-Positive Semantic Triage:** Leverages IBM Bob 2.0's LLM engine to perform full data-flow and taint analysis rather than brittle static regex.
+* **Zero False-Positive Semantic Triage:** Leverages IBM Bob 2.0's LLM engine via Bob Shell to perform full semantic taint analysis rather than brittle static regex.
 * **Fail-Safe Remediation Transaction:** Every automated patch follows a deterministic pipeline:
 
 $$
@@ -17,7 +17,7 @@ $$
 
 If test suites fail or syntax errors occur, BobGuard restores the exact original file automatically.
 
-* **Human-in-the-Loop (HITL) Governance:** No file on the local filesystem is modified without explicit interactive developer authorization (`Y/n`).
+* **Human-in-the-Loop (HITL) Governance:** No file on the local filesystem is modified without explicit interactive developer authorization (`y/N`).
 * **Pre-Flight Workspace Guard:** Detects empty target repositories upfront and guides developers to mount code before expending inference credits.
 * **Polyglot & Framework Agnostic:** Centralized extension routing (`supported_extension.py`) covering Frontend, Backend, Templates, and Configurations.
 
@@ -51,8 +51,8 @@ If test suites fail or syntax errors occur, BobGuard restores the exact original
                                          │
                                          ▼
                         ┌─────────────────────────────────┐
-                        │   IBM Bob 2.0 / Granite LLM     │
-                        │    (REST API / Bob Shell)       │
+                        │   IBM Bob 2.0 Shell (Headless)  │
+                        │   bob run --format json         │
                         └────────────────┬────────────────┘
                                          │
                                          ▼
@@ -91,6 +91,114 @@ If test suites fail or syntax errors occur, BobGuard restores the exact original
 
 ---
 
+## IBM Bob 2.0 Environment & Toolchain Setup
+
+BobGuard operates seamlessly alongside IBM Bob IDE for local development and automates audits through the headless IBM Bob Shell (`bob` CLI).
+
+### 1. Setting Up IBM Bob IDE
+
+1. **Install Extension / IDE:** In VS Code or your Bob IDE distribution, navigate to the Extensions tab (`Ctrl+Shift+X` or `Cmd+Shift+X`), search for **IBM Bob**, and install it.
+2. **Authenticate:** Open the Command Palette (`Ctrl+Shift+P` or `Cmd+Shift+P`), run `IBM Bob: Sign In`, and complete authentication via your browser from [bob.ibm.com](https://bob.ibm.com?utm_source=gemini).
+3. **Workspace Context Activation:** When this repository is opened in IBM Bob IDE, the agent automatically recognizes the `.bob/` convention:
+
+* `.bob/rules/`: OWASP Top 10 rules loaded into active context for developer queries.
+* `.bob/prompts/`: Audit and patch orchestration instructions ensuring consistent findings between IDE chats and CLI audits.
+
+---
+
+### 2. Installing & Verifying IBM Bob Shell (`bob` CLI)
+
+BobGuard executes scans non-interactively using the official `bob` command-line utility.
+
+1. **Verify Existing Installation:**
+   Check if the binary is already available in your system path:
+
+```bash
+bob --version
+
+```
+
+2. **Install Standalone CLI (if not installed):**
+
+```bash
+npm install -g @ibm/bob-cli
+
+```
+
+Ensure the directory containing `bob` (or `bob.cmd` on Windows) is registered in your system `PATH`.
+
+---
+
+### 3. Environment Variable Configuration Methods
+
+BobGuard supports three complementary methods to supply configuration parameters (such as `BOB_API_KEY`, timeout thresholds, and execution cost limits):
+
+#### Method A: Via Local `.env` File (Recommended)
+
+Copy the template and supply your production key:
+
+```bash
+cp .env.example .env
+
+```
+
+Fill in the parameters in `.env`:
+
+```env
+# Required: IBM Bob API Key (starts with bob_prod...)
+BOB_API_KEY=bob_prod_your_api_key_here
+```
+
+`BobGuardBackend` uses `python-dotenv` to automatically load this configuration upon startup.
+
+#### Method B: Via System / Shell Environment Variables
+
+If you prefer not to store credentials in a local file, set the variable directly in your operating system:
+
+* **Windows (PowerShell - Current Session):**
+
+```powershell
+$env:BOB_API_KEY = "bob_prod_your_api_key_here"
+
+```
+
+* **Windows (Persistent for User Profile):**
+
+```powershell
+[Environment]::SetEnvironmentVariable("BOB_API_KEY", "bob_prod_your_api_key_here", [EnvironmentVariableTarget]::User)
+
+```
+
+* **Linux / macOS (Bash / Zsh):**
+
+```bash
+export BOB_API_KEY="bob_prod_your_api_key_here"
+echo 'export BOB_API_KEY="bob_prod_your_api_key_here"' >> ~/.bashrc
+
+```
+
+#### Method C: Programmatic Setup Directly in Python
+
+Because `bobguard_backend.py` respects existing variables without overriding them (`override=False`), you can configure credentials dynamically from custom scripts or Jupyter notebooks before initializing the backend:
+
+```python
+import os
+from bobguard_backend import BobGuardBackend
+
+# Set environment programmatically
+os.environ["BOB_API_KEY"] = "bob_prod_your_api_key_here"
+os.environ["BOB_REQUEST_TIMEOUT"] = "120"
+os.environ["BOB_MAX_COST"] = "0.50"
+
+# Initialize and scan target codebase
+backend = BobGuardBackend(project_root="sample-app")
+findings = backend.scan_entire_codebase("sample-app")
+print(f"Discovered {len(findings)} security findings.")
+
+```
+
+---
+
 ## Repository Structure
 
 ```text
@@ -102,8 +210,9 @@ If test suites fail or syntax errors occur, BobGuard restores the exact original
 │       └── patch-remediation-2025.md     # Safe remediation & unified diff protocol
 ├── sample-app/
 │   ├── app.py                            # Target application with deliberate flaws
-│   ├── test_app.py                       # Automated test suite for regression verification
-│   └── requirements.txt                  # Minimal application dependencies
+│   ├── db.py                             # Database operations
+│   ├── tests/                            # Automated test suite for regression verification
+│   └── requirements.txt                  # Application dependencies
 ├── bobguard_backend.py                   # Core orchestration, LLM interface & rollback engine
 ├── cli.py                                # Visual terminal UI with Rich & ASCII banners
 ├── supported_extension.py                # Supported file extension registry
@@ -122,61 +231,55 @@ If test suites fail or syntax errors occur, BobGuard restores the exact original
 
 ### 1. Prerequisites
 
-* Python 3.9+ installed
-* An active IBM Bob 2.0 account and API Key from [bob.ibm.com](https://bob.ibm.com?utm_source=gemini)
+* Python 3.9+
+* Node.js & npm (if using the Bob CLI npm package)
+* IBM Bob CLI (`bob`) accessible from your terminal
+* An active IBM Bob account with API access
 
-### 2. Installation & Setup
+### 2. Installation & Dependency Setup
 
-Clone the repository and install dependencies:
+Clone the repository and install the required Python packages:
 
 ```bash
 git clone https://github.com/<your-username>/BobGuard.git
 cd BobGuard
 
-# Install core CLI dependencies
+# Install core CLI and testing dependencies
 pip install rich requests python-dotenv pytest
 
 ```
 
-Configure your environment variables:
+Configure your environment:
 
 ```bash
-# Copy example environment configuration
 cp .env.example .env
-
-```
-
-Open `.env` and fill in your credentials:
-
-```env
-BOB_API_KEY=your_actual_ibm_bob_api_key_here
-BOB_API_ENDPOINT=https://api.bob.ibm.com/v1/chat/completions
-BOB_MODEL=ibm-granite
-BOB_REQUEST_TIMEOUT=90
-BOBGUARD_TEST_TIMEOUT=120
+# Edit .env and supply your BOB_API_KEY
 
 ```
 
 ---
 
-### 3. Setting Up Global CLI Command
+### 3. Setting Up Global CLI Access
 
 #### On Windows (PowerShell / CMD)
 
-Add the current directory to your user PATH or use the batch wrapper:
+Run through the included batch script:
 
 ```powershell
-# Method A: Current session shortcut
-function bobguard { python "$PWD\cli.py" $args }
-
-# Method B: Direct call via batch file
 .\bobguard run
+
+```
+
+Or define an alias for your current terminal session:
+
+```powershell
+function bobguard { python "$PWD\cli.py" $args }
 
 ```
 
 #### On Linux / macOS / WSL
 
-Make the launcher executable and link it to your binary path:
+Make the Python CLI executable and link it to your binary directory:
 
 ```bash
 chmod +x cli.py
@@ -191,24 +294,24 @@ bobguard --help
 
 ## Usage
 
-### 1. Full Audit and Interactive Remediation Pipeline
+### 1. Full Audit and Interactive Remediation Pipeline (`run`)
 
-Performs environment discovery, analyzes all source code via IBM Bob 2.0, presents findings, and guides you through patching:
+Discovers files, analyzes them against OWASP rules, displays findings, prompts for approval, and applies safe verified fixes:
 
 ```bash
 bobguard run
-# Or target a specific workspace
+# Or target a specific workspace directory
 bobguard run --dir sample-app
 
 ```
 
-### 2. Read-Only Security Assessment
+### 2. Read-Only Security Assessment (`scan`)
 
-Runs the triage engine and prints the findings table without prompting for file mutations:
+Runs the triage engine and prints the findings table without modifying files or generating patches:
 
 ```bash
 bobguard scan
-# Or target a specific workspace
+# Or target a specific workspace directory
 bobguard scan --dir sample-app
 
 ```
@@ -217,47 +320,53 @@ bobguard scan --dir sample-app
 
 ## Demonstration with `sample-app`
 
-The repository includes a ready-to-test workspace in `sample-app/`:
+The repository includes a vulnerable web application under `sample-app/` for testing and evaluation.
 
-1. **Verify Early Guard Check:**
-   Remove files in `sample-app/` to observe the workspace guard in action:
+### 1. Verify Pre-Flight Workspace Guard
+
+Point BobGuard to an empty or non-code folder:
 
 ```bash
-bobguard run --dir sample-app
-
+bobguard run 
 ```
 
-*Output:*
+*Expected Terminal Output:*
 
 ```text
-╭───────────────────────── Empty Target Workspace ─────────────────────────╮
-│ Workspace directory 'sample-app' is empty or contains no supported code!   │
+╭─────────────────────────   Empty Target Workspace ─────────────────────────╮
+│ Workspace directory 'docs' is empty or contains no supported code!         │
 │                                                                            │
-│ copy or pull your code to sample-app to let Bob do his audit job        │
+│     copy or pull your code to docs to let Bob do his audit job             │
 ╰────────────────────────────────────────────────────────────────────────────╯
 ```
 
-2. **Execute Audit & Verified Remediation:**
-   Ensure `sample-app/app.py` and `sample-app/test_app.py` are in place, then execute:
+### 2. Execute Full Audit & Safe Patch Verification
+
+Run BobGuard against the sample app:
 
 ```bash
-bobguard run --dir sample-app
+./bobguard run 
+```
+
+1. **Semantic Discovery:** BobGuard identifies active issues (e.g., SQL Injection and Hardcoded Secrets) and displays an OWASP triage table.
+2. **Unified Diff Inspection:** A colorized diff preview shows the proposed changes.
+3. **HITL Authorization:** Approve the patch when prompted (`y`).
+4. **Verification Transaction:** BobGuard compiles the patched file, runs the `pytest` regression suite, and performs an LLM security re-scan before confirming `✓ FIXED & VERIFIED`.
+
+### 3. Resetting the Demo for Repeated Runs
+
+To reset the demonstration app back to its initial vulnerable state:
+
+* **Windows PowerShell:**
+
+```powershell
+Copy-Item sample-app\app.py.bak sample-app\app.py -Force
 
 ```
 
-* Watch BobGuard identify the SQL Injection and Hardcoded Secret.
-* Inspect the proposed Unified Diff generated by IBM Bob.
-* Press `Y` to authorize the patch.
-* Observe automated syntax verification, `pytest` regression execution, and targeted security re-scans confirm `✓ FIXED & VERIFIED`.
+* **Linux / macOS:**
 
-3. **Resetting the Demo:**
-   Restore the vulnerable file state to repeat the test:
-
-```powershell
-# Windows PowerShell
-Copy-Item sample-app\app.py.bak sample-app\app.py -Force
-
-# Linux / macOS
+```bash
 cp sample-app/app.py.bak sample-app/app.py
 
 ```
@@ -266,6 +375,6 @@ cp sample-app/app.py.bak sample-app/app.py
 
 ## Security & Governance
 
-* **Zero Credential Leakage:** API keys are restricted to local `.env` files protected by `.gitignore` and `.bobignore`.
-* **Atomic Operations:** Code replacements occur as single-occurrence substitutions or strict line matches to prevent unintended file alterations.
+* **Zero Credential Leakage:** API keys are restricted to local environment files protected by `.gitignore` and `.bobignore`.
+* **Atomic Patch Application:** Code replacements occur as single-occurrence substitutions or strict line matches to prevent unintended file alterations.
 * **Deterministic Rollback:** If any post-patch check fails (syntax compilation, unit test regression, or residual vulnerability detection), the temporary `.bak` file is restored immediately, leaving the working directory clean.

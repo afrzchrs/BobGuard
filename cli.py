@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""BobGuard CLI Frontend - audit, remediation, verification and rollback."""
+"""BobGuard CLI Frontend - Visual interface powered by Rich."""
 
 from __future__ import annotations
 
 import argparse
 import sys
+import traceback
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -15,14 +16,12 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
+# Mengimpor backend resmi
 try:
     from bobguard_backend import BobGuardBackend
 except ImportError:
-    try:
-        from bobguard_backend import BobGuardBackend
-    except ImportError:
-        print("[ERROR] Cannot import BobGuardBackend. Check bobguard_backend_3.py or bobguard_backend.py.")
-        sys.exit(1)
+    print("[ERROR] Cannot import BobGuardBackend from bobguard_backend.py.")
+    sys.exit(1)
 
 console = Console()
 
@@ -33,6 +32,7 @@ ASCII_BANNER = r"""
 | |_) | (_) | |_) | |_| | |_| | (_| | | | (_| |
 |____/ \___/|_.__/ \____|\__,_|\__,_|_|  \__,_|
 """
+
 
 def print_hero_banner() -> None:
     banner_text = Text(ASCII_BANNER, style="bold cyan")
@@ -45,13 +45,11 @@ def print_hero_banner() -> None:
 
 def render_triage_table(findings: List[Dict[str, Any]]) -> None:
     if not findings:
-        console.print(
-            "\n[bold green]✓ No confirmed OWASP Top 10:2025 vulnerabilities detected.[/bold green]\n"
-        )
+        console.print("\n[bold green]✓ Codebase Clean: No confirmed OWASP vulnerabilities detected![/bold green]\n")
         return
 
     table = Table(
-        title="\n[bold yellow]🛡 OWASP Top 10:2025 Vulnerability Triage[/bold yellow]",
+        title="\n[bold yellow]🛡️  OWASP Top 10 Vulnerability Triage Report[/bold yellow]",
         show_lines=True,
         header_style="bold bright_white on blue",
     )
@@ -62,24 +60,24 @@ def render_triage_table(findings: List[Dict[str, Any]]) -> None:
     table.add_column("Vulnerability")
     table.add_column("File:Line", style="magenta")
 
-    for idx, finding in enumerate(findings, 1):
-        severity = str(finding.get("severity", "MEDIUM")).upper()
-        if severity == "CRITICAL":
-            sev = "[bold white on red] CRITICAL [/bold white on red]"
-        elif severity == "HIGH":
-            sev = "[bold red]HIGH[/bold red]"
-        elif severity == "MEDIUM":
-            sev = "[bold yellow]MEDIUM[/bold yellow]"
+    for idx, f in enumerate(findings, 1):
+        sev = str(f.get("severity", "MEDIUM")).upper()
+        if sev == "CRITICAL":
+            sev_styled = "[bold white on red] CRITICAL [/bold white on red]"
+        elif sev == "HIGH":
+            sev_styled = "[bold red]HIGH[/bold red]"
+        elif sev == "MEDIUM":
+            sev_styled = "[bold yellow]MEDIUM[/bold yellow]"
         else:
-            sev = "[bold blue]LOW[/bold blue]"
+            sev_styled = "[bold blue]LOW[/bold blue]"
 
         table.add_row(
             str(idx),
-            sev,
-            str(finding.get("confidence", "MEDIUM")),
-            str(finding.get("category", "General Security")),
-            str(finding.get("name", "Unknown Issue")),
-            f"{finding.get('file', 'unknown')}:{finding.get('line', '?')}",
+            sev_styled,
+            str(f.get("confidence", "MEDIUM")),
+            str(f.get("category", "General Security")),
+            str(f.get("name", "Unknown Issue")),
+            f"{Path(f.get('file', '')).name}:{f.get('line', '?')}",
         )
 
     console.print(table)
@@ -89,9 +87,8 @@ def display_remediation_proposal(finding: Dict[str, Any], proposal: Dict[str, An
     details = (
         f"[bold red]Finding:[/bold red] {finding.get('name', 'N/A')}\n"
         f"[bold]Location:[/bold] {finding.get('file', 'N/A')} (Line {finding.get('line', '?')})\n"
-        f"[bold]OWASP:[/bold] {finding.get('rule_id', 'N/A')} - {finding.get('category', 'N/A')}\n"
+        f"[bold]OWASP ID:[/bold] {finding.get('rule_id', 'N/A')} - {finding.get('category', 'N/A')}\n"
         f"[bold]Severity:[/bold] {finding.get('severity', 'MEDIUM')}\n"
-        f"[bold]Confidence:[/bold] {finding.get('confidence', 'MEDIUM')}\n"
         f"[bold green]Root Cause:[/bold green] {proposal.get('root_cause', 'N/A')}"
     )
     console.print(Panel(details, title="[bold]Remediation Proposal[/bold]", border_style="cyan"))
@@ -111,6 +108,7 @@ def display_remediation_proposal(finding: Dict[str, Any], proposal: Dict[str, An
 
 def print_validation(result: Dict[str, Any]) -> None:
     status = result.get("status", "UNKNOWN")
+
     if status == "FIXED & VERIFIED":
         console.print("\n[bold green]✓ FIXED & VERIFIED[/bold green]")
     elif status == "PATCH FAILED / ROLLED BACK":
@@ -124,77 +122,114 @@ def print_validation(result: Dict[str, Any]) -> None:
         ("tests", "Post-patch tests"),
         ("security_rescan", "Security re-scan"),
     ):
-        value = result.get(key)
-        if not value:
+        val = result.get(key)
+        if not val:
             continue
-        passed = value.get("passed")
+
+        passed = bool(val.get("passed"))
         icon = "✓" if passed else "✗"
         style = "green" if passed else "red"
-        console.print(f"[{style}]{icon} {label}: {value.get('status')}[/{style}]")
+        console.print(
+            f"[{style}]{icon} {label}: {val.get('status')}[/{style}]"
+        )
+
+        # Tampilkan detail diagnosis terutama untuk syntax validation.
+        # Backend dapat mengembalikan stdout/stderr gabungan pada "output".
+        diagnostic = str(val.get("output") or "").strip()
+        command = val.get("command")
+
+        if not passed and diagnostic:
+            title = f"{label} - stderr / diagnostic output"
+            console.print(
+                Panel(
+                    Text(diagnostic),
+                    title=title,
+                    border_style="red" if key == "syntax" else "yellow",
+                )
+            )
+
+        if not passed and command:
+            console.print(
+                f"[dim]Command: {command}[/dim]"
+            )
+
+        # Jika backend mengirim traceback terpisah, tampilkan utuh.
+        tb = str(val.get("traceback") or "").strip()
+        if tb:
+            console.print(
+                Panel(
+                    Text(tb),
+                    title=f"{label} - full traceback",
+                    border_style="red",
+                )
+            )
+
+    # Tampilkan detail patch jika pipeline gagal menerapkan perubahan.
+    apply_message = str(result.get("apply_message") or "").strip()
+    if apply_message:
+        console.print(
+            Panel(
+                Text(apply_message),
+                title="Patch application details",
+                border_style="yellow",
+            )
+        )
+
+
+
+def _print_full_traceback(exc: BaseException) -> None:
+    """Display an unexpected CLI traceback in a readable Rich panel."""
+    tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+    console.print(
+        Panel(
+            Text(tb),
+            title="Unexpected CLI traceback",
+            border_style="red",
+        )
+    )
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="BobGuard: OWASP Top 10:2025 audit + verified remediation"
+        description="BobGuard: OWASP Top 10 audit and verified remediation engine."
     )
     parser.add_argument(
         "action",
         choices=["run", "scan"],
         nargs="?",
         default="run",
-        help="run = audit + interactive remediation; scan = read-only audit",
+        help="run = audit + remediation; scan = read-only audit",
     )
     parser.add_argument(
         "--dir",
         default="sample-app",
-        help="Target repository directory (default: sample-app)",
+        help="Target workspace directory to audit (default: sample-app)",
     )
     args = parser.parse_args()
 
     print_hero_banner()
 
-    # --- EARLY GUARD CHECK: SAMPLE-APP VALIDATION ---
+    # Early check target workspace
     target_path = Path(args.dir)
-    # Tentukan folder yang dicek (sample-app atau target khusus)
-    check_dir = target_path if "sample-app" in str(target_path) else Path("sample-app")
-
-    if BobGuardBackend.is_directory_empty_or_no_code(check_dir):
-        message = (
-            f"[bold red]Workspace directory '[cyan]{check_dir}[/cyan]' is empty or contains no supported code files![/bold red]\n\n"
-            "[bold yellow]copy or pull your code to sample-app to let Bob do his audit job[/bold yellow]\n\n"
-            "[dim]Quick example commands:[/dim]\n"
-            f"  • [cyan]cp -r /path/to/your/source/* {check_dir}/[/cyan]\n"
-            f"  • [cyan]git clone <repo-url> {check_dir}[/cyan]\n"
+    if BobGuardBackend.is_directory_empty_or_no_code(target_path):
+        msg = (
+            f"[bold red]Workspace directory '[cyan]{target_path}[/cyan]' is empty or contains no supported code![/bold red]\n\n"
+            "[bold yellow]👉 copy or pull your code to sample-app to let Bob do his audit job[/bold yellow]\n"
         )
-        console.print(
-            Panel(
-                message,
-                title="[bold red]Empty Target Workspace[/bold red]",
-                border_style="red",
-            )
-        )
+        console.print(Panel(msg, title="[bold red]⚠️  Empty Target Workspace[/bold red]", border_style="red"))
         sys.exit(0)
 
-    # Inisialisasi Backend setelah workspace terbukti memiliki file kode
     try:
-        backend = BobGuardBackend(args.dir)
+        backend = BobGuardBackend(project_root=args.dir)
     except Exception as exc:
         console.print(f"[bold red]Initialization Error:[/bold red] {exc}")
         sys.exit(1)
 
-    console.print(
-        f"[dim green]✓ OWASP rules loaded: {backend.rules_path} ({len(backend.rules)} categories)[/dim green]"
-    )
-    console.print(
-        f"[dim green]✓ Audit orchestrator loaded: {backend.audit_prompt_path}[/dim green]"
-    )
-    console.print(
-        f"[dim green]✓ Remediation protocol loaded: {backend.patch_prompt_path}[/dim green]\n"
-    )
+    console.print(f"[dim green]✓ OWASP rules loaded: {backend.rules_path.name} ({len(backend.rules)} active rules)[/dim green]")
+    console.print(f"[dim green]✓ Audit orchestrator loaded: {backend.audit_prompt_path.name}[/dim green]")
+    console.print(f"[dim green]✓ Remediation protocol loaded: {backend.patch_prompt_path.name}[/dim green]\n")
 
-    with console.status(
-        "[bold green]Scanning codebase against OWASP Top 10:2025..."
-    ):
+    with console.status(f"[bold green]Scanning codebase in '{args.dir}' against OWASP rules..."):
         findings = backend.scan_entire_codebase(args.dir)
 
     render_triage_table(findings)
@@ -205,7 +240,7 @@ def main() -> None:
     target = findings[0]
 
     try:
-        with console.status("[bold green]Generating safe remediation proposal..."):
+        with console.status("[bold green]Generating safe remediation proposal with IBM Bob..."):
             proposal = backend.generate_patch_with_bob(target)
         proposal["line"] = target.get("line")
     except Exception as exc:
@@ -215,7 +250,7 @@ def main() -> None:
     display_remediation_proposal(target, proposal)
 
     confirmed = Confirm.ask(
-        f"[bold white]Authorize BobGuard to patch {target.get('file')} automatically?[/bold white]",
+        f"[bold white]Authorize BobGuard to patch [cyan]{Path(target.get('file', '')).name}[/cyan] automatically?[/bold white]",
         default=False,
     )
     if not confirmed:
@@ -229,17 +264,11 @@ def main() -> None:
         console.print(f"[bold red]Remediation pipeline failed:[/bold red] {exc}")
         return
 
-    print_validation(result)
-
-    security = result.get("security_rescan", {})
-    remaining = security.get("remaining_findings", []) if security else []
-    if remaining:
-        console.print("[yellow]Remaining matching findings:[/yellow]")
-        for item in remaining:
-            console.print(
-                f"  • {item.get('rule_id')} {item.get('name')} "
-                f"at {item.get('file')}:{item.get('line')}"
-            )
+    try:
+        print_validation(result)
+    except Exception as exc:
+        _print_full_traceback(exc)
+        raise
 
 
 if __name__ == "__main__":
